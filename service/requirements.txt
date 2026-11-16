@@ -1,0 +1,3 @@
+# 服务端运行依赖（系统级还需要 ffmpeg / ffprobe 在 PATH 中）
+requests>=2.31.0
+yt-dlp>=2024.12.13

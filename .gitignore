@@ -1,0 +1,27 @@
+# 构建产物与依赖缓存
+firmware/build/
+firmware/managed_components/
+__pycache__/
+*.pyc
+*.pyo
+
+# 本地配置与运行时状态（可能含 Cookie / 配对码 / 设备凭据）
+service/state/
+/etc/passport-bili/
+*.env.local
+serial_log.txt
+
+# 抓包、镜像包、临时文件
+*.tar.gz
+*.bin
+*.elf
+*.map
+*.log
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
+
+# 上游参考检出（不入库，见 README 的「致谢与来源」）
+refs/

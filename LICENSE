@@ -1,0 +1,53 @@
+MIT License
+
+Copyright (c) 2026 ai-passport-bili contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## Third-party notices / 第三方声明
+
+This project is a derivative work. Part of the firmware (the TV player
+component `firmware/components/passport_tv`, the Wi-Fi provisioning component
+`firmware/components/passport_wifi`, the BSP layer, and the wire protocol
+implemented in `service/passport_bili/tv/`) originates from **Passport TV**:
+
+    Passport TV
+    Copyright (c) 2026 FoloToy
+    https://github.com/FoloToy/ai-passport
+
+    Licensed under the MIT License. The full text is reproduced above;
+    the original copyright notice is retained as required.
+
+本项目的固件播放器组件（`firmware/components/passport_tv`）、配网组件
+（`firmware/components/passport_wifi`）、BSP 层，以及服务端的传输协议实现
+（`service/passport_bili/tv/`），均衍生自 FoloToy 的 Passport TV 项目，遵循其
+MIT 许可，并保留原始版权声明。
+
+Other third-party components keep their own licences:
+
+- **ESP-IDF** (Apache-2.0) — https://github.com/espressif/esp-idf
+- **LVGL** (MIT) — https://github.com/lvgl/lvgl
+- **esp_lvgl_port**, **esp_codec_dev**, **button** (Apache-2.0) — Espressif
+- Bundled fonts under `firmware/main/` and the original `fonts/LICENSE.txt`
+  follow their own terms; see that file.
+
+This project is not affiliated with, endorsed by, or sponsored by
+bilibili (哔哩哔哩). "bilibili" and related marks belong to their owners.
