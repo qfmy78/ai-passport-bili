@@ -43,6 +43,17 @@ else
   CONF_DIR="${CONF_DIR:-$HOME/.config/$APP_NAME}"
 fi
 PIP_INDEX="${PIP_INDEX:-https://pypi.tuna.tsinghua.edu.cn/simple}"
+
+# 这三个是实测调出来的，不是拍脑袋的默认值，别随手改大：
+#   TV_FPS=12        C3 要 inflate 15 个条带再扩成 RGB565 刷屏，12~15 是舒适区，
+#                    18 以上设备侧跟不上，表现为画面一顿一顿。
+#   TV_ZLIB_LEVEL=3  条带压缩级别。默认 6 时 2 核 VPS 的 CPU 会被压满（每秒 200 多次
+#                    zlib），降到 3 速度快一倍、体积只大 10~15%。
+#   TV_AUDIO=1       关掉后不下发音频包，但**播放会卡在彩条上**——固件要等音频时钟
+#                    建立才肯开画，所以只能做设备端静音，不能停发。
+TV_FPS="${TV_FPS:-12}"
+TV_ZLIB_LEVEL="${TV_ZLIB_LEVEL:-3}"
+TV_AUDIO="${TV_AUDIO:-1}"
 MODE="install"; SETUP_ONLY=0; ASSUME_YES=0
 
 usage() { sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
@@ -259,6 +270,9 @@ write_env() {
     printf 'TV_PAIRING_CODE=%s\n'    "$TV_PAIRING_CODE"
     printf 'TV_PAIRING_TOKEN=%s\n'   "$TV_PAIRING_TOKEN"
     printf 'TV_QUALITY=%s\n'         "$TV_QUALITY"
+    printf 'TV_FPS=%s\n'             "$TV_FPS"
+    printf 'TV_ZLIB_LEVEL=%s\n'      "$TV_ZLIB_LEVEL"
+    printf 'TV_AUDIO=%s\n'           "$TV_AUDIO"
     printf 'TV_MAX_SESSIONS=2\n'
     printf 'TV_STATE_DIR=%s\n'       "$CONF_DIR/data"
   } > "$ENV_FILE"
@@ -419,6 +433,27 @@ start_and_verify() {
   fi
 }
 
+# ---------- 升级时补齐新增配置项 ---------------------------------------------
+# 老版本装的配置里没有 TV_FPS / TV_ZLIB_LEVEL / TV_AUDIO。KEEP_CFG=1 会保留旧配置，
+# 于是这些键永远缺失——用户看脚本更新了，实际跑的还是代码里的默认值。
+# 这里按 defaults.env 把缺的键补上，已有的值一律不动。
+merge_defaults() {
+  [ -f "$ENV_FILE" ] || return 0
+  local src="$PREFIX/service/defaults.env" line key added=0
+  [ -f "$src" ] || return 0
+  while IFS= read -r line; do
+    case "$line" in ''|'#'*) continue ;; esac
+    key="${line%%=*}"
+    if ! grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
+      printf '%s\n' "$line" >> "$ENV_FILE"
+      added=$((added + 1))
+    fi
+  done < "$src"
+  if [ "$added" -gt 0 ]; then
+    ok "已补入 $added 个新增配置项（原有值未改动）"
+  fi
+}
+
 # ---------- 主流程 -----------------------------------------------------------
 banner() {
   printf '\n%s==============================================%s\n' "$C_B" "$C_0"
@@ -460,6 +495,8 @@ main() {
 
   [ "$SETUP_ONLY" -eq 1 ] && { step "完成" "已按 --setup-only 跳过启动"; exit 0; }
 
+  merge_defaults
+
   install_systemd || true
   start_and_verify
 
@@ -468,8 +505,8 @@ main() {
   info "2) 填服务器地址（本机局域网 IP）、端口 $TV_PORT、配对码 $(grep -o 'TV_PAIRING_CODE=.*' "$ENV_FILE" | cut -d= -f2)"
   info "3) 放行防火墙：sudo ufw allow $TV_PORT/tcp（或 firewall-cmd --add-port=$TV_PORT/tcp）"
   info "4) 查配对码：$0 --show-pairing    看日志：journalctl -u $APP_NAME -f"
-  info "带宽占用（已按条带 deflate 压缩后估算）：smooth 8fps≈1Mbps / standard 15fps≈2Mbps / ultra 30fps≈4Mbps"
-  info "公网 VPS 带宽不够就先砍到 smooth，画质命令：编辑 $ENV_FILE 里的 TV_QUALITY"
+  info "带宽占用（条带 deflate 压缩后实测）：12fps≈1.5Mbps / 15fps≈2Mbps / 8fps≈1Mbps"
+  info "画面卡顿先降帧率：编辑 $ENV_FILE 里的 TV_FPS（12 起步，C3 上限约 15）"
   printf '\n'
 }
 

@@ -73,6 +73,8 @@ typedef struct {
 
 // 播放中菜单可以发起的动作，作为 config.action 的参数。
 #define PASSPORT_TV_ACTION_FAVORITE 1
+#define PASSPORT_TV_ACTION_PAUSE    2   // 覆盖层打开：请服务端暂停推进
+#define PASSPORT_TV_ACTION_RESUME   3   // 覆盖层关闭：请服务端恢复
 
 // Key events go here while TV runs (bsp_btn_t, bsp_btn_ev_t as ints).
 void ft_tv_key(int key, int event);

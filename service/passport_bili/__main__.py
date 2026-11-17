@@ -12,17 +12,22 @@ import signal
 import socket
 import sys
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import __version__, bili as bili_api
+from . import stream as stream_mod
 from .stream import SessionError, stream as fav1_stream
 
 LOCK = threading.Lock()
 DEVICES: dict[str, dict] = {}
 # 配对令牌 -> 待播 bvid。设备点播放时先 POST /api/play 登记，再起 FAV1 会话读取。
 PENDING: dict[str, str] = {}
+
+# /api/health 的登录状态缓存：真校验要打 B 站，60 秒一次足够。
+LOGIN_STATE = {"ok": False, "name": "", "at": 0.0}
 
 # 一个进程共用一个 B 站客户端（WBI 密钥要复用，否则每次请求都得重新拉 nav）。
 _CLIENT: bili_api.BiliClient | None = None
@@ -170,6 +175,14 @@ class Handler(BaseHTTPRequestHandler):
             return (query.get(name) or [default])[0]
 
         if path == "/api/health":
+            # 登录状态要真校验，但 health 是被监控轮询的，不能每次都打 B 站：
+            # 60 秒缓存，且校验失败只影响这一项，不拖垮整个健康检查。
+            if time.time() - LOGIN_STATE["at"] > 60:
+                try:
+                    ok, name = bili().login_state()
+                except Exception:
+                    ok, name = False, ""            # 网络问题按未登录报，宁可误报
+                LOGIN_STATE.update({"ok": ok, "name": name, "at": time.time()})
             self.send_json(200, {
                 "ok": True,
                 "version": __version__,
@@ -177,7 +190,8 @@ class Handler(BaseHTTPRequestHandler):
                 "port": CFG.port,
                 "quality": CFG.quality,
                 "bili": {
-                    "logged_in": CFG.logged_in,
+                    "logged_in": LOGIN_STATE["ok"],
+                    "name": LOGIN_STATE["name"] or None,
                     "uid": CFG.dede_userid or None,
                 },
                 "pairing_configured": bool(CFG.pairing_code),
@@ -308,6 +322,17 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, {"ok": True, "folder": folder})
             except bili_api.BiliError as exc:
                 self.send_json(502, {"error": "bili", "detail": str(exc)})
+
+        elif path == "/api/pause":
+            dev = str(payload.get("device", "")).strip().lower()
+            rec = DEVICES.get(dev)
+            if not rec:
+                self.send_json(403, {"error": "device_not_paired"})
+                return
+            paused = bool(payload.get("paused"))
+            stream_mod.set_paused(str(rec.get("ticket", "")), paused)
+            print(f"  暂停{'开启' if paused else '关闭'} {dev}", flush=True)
+            self.send_json(200, {"ok": True, "paused": paused})
 
         elif path == "/api/play":
             dev = str(payload.get("device", "")).strip().lower()

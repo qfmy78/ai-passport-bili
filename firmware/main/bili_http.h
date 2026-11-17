@@ -92,6 +92,9 @@ esp_err_t bili_request_play(const char *host, uint16_t port, const char *device,
 // 把正在播的视频收进收藏夹。
 esp_err_t bili_request_favorite(const char *host, uint16_t port, const char *device,
                                 const char *bvid);
+// 暂停/恢复：服务端据此停止或继续推进转码，画面真正定格而不是丢帧。
+esp_err_t bili_request_pause(const char *host, uint16_t port, const char *device,
+                             bool paused);
 // 设备唯一 ID：12 位小写十六进制，取自出厂 MAC。
 void bili_device_id(char out[13]);
 

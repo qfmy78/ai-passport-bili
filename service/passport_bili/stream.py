@@ -28,6 +28,7 @@ from .tv.protocol import Kind, Packet, json_bytes, receive_packet, send_packet
 frames._COMPRESS_LEVEL = int(os.environ.get("TV_ZLIB_LEVEL", "3"))
 
 PCM_CHUNK = protocol.AUDIO_PCM_BYTES          # 1280 = 640 个 s16le 采样 = 40 ms
+AUDIO_CHUNK_MS = 40                            # 协议规定的音频时间粒度，pts 每包 +40
 FRAME_BYTES = frames.FRAME_PIXELS             # 320*180 = 57600 字节 rgb8
 FPS = int(os.environ.get("TV_FPS", "15"))
 START_DELAY_MS = 200
@@ -46,6 +47,20 @@ CA_FILE = os.environ.get("TV_CA_FILE", "/etc/pki/tls/certs/ca-bundle.crt")
 # 关掉音频后不下发 PCM 包（仍然从 ffmpeg 读掉，免得管道堵住）。
 # 时钟照常推进，视频 pts 才能继续往前跑。
 AUDIO_ENABLED = os.environ.get("TV_AUDIO", "1") != "0"
+
+# 播放暂停：设备打开播放设置时置位。
+#
+# 为什么不能只在设备端"停止渲染"：那样只是丢帧，退出菜单后画面会直接跳到新位置，
+# 中间的内容永远看不到了。真正的暂停要服务端停下来——不读 ffmpeg（管道写满后
+# ffmpeg 自己就阻塞了），同时继续按帧率给设备重发最后一帧、按 40ms 发静音包，
+# 这样设备不会因为没数据而判定断流，时钟也一直是连贯的。
+PAUSE: dict[str, threading.Event] = {}
+
+
+def set_paused(token: str, paused: bool) -> None:
+    """按会话令牌设置暂停。令牌就是配发给设备的 ticket。"""
+    event = PAUSE.setdefault(token, threading.Event())
+    event.set() if paused else event.clear()
 
 
 class SessionError(RuntimeError):
@@ -271,7 +286,10 @@ def stream(conn: socket.socket, resolve, stop: threading.Event | None = None,
     """
     stop = stop or threading.Event()
     body = read_hello(conn)
-    video_url, audio_url, title = resolve(body.get("token"))
+    token = str(body.get("token") or "")
+    paused = PAUSE.setdefault(token, threading.Event())
+    paused.clear()                       # 新会话一律从播放态开始
+    video_url, audio_url, title = resolve(token)
     session = int(time.time()) & 0x7FFFFFFF
     send_config(conn, session, fps, title)
     log(f"  session {session}：CONFIG 已发送，等待设备接受")
@@ -300,13 +318,25 @@ def stream(conn: socket.socket, resolve, stop: threading.Event | None = None,
             return
         vsock.settimeout(10.0)
         frames_sent = 0
-        shown = bytearray(FRAME_BYTES)     # 设备当前画面，用于算差异
-        have_shown = False
-        # 每 45 帧强制整帧一次：万一中途丢包，设备画面能在两秒内自愈。
-        FULL_REFRESH_EVERY = 45
-        SP = frames.STRIPE_PIXELS
+        last_payloads: list[bytes] = []    # 暂停时重发用，保持设备有数据可画
         with vsock:
             while not stop.is_set():
+                if paused.is_set():
+                    # 暂停：不碰 ffmpeg（它写满管道会自己阻塞，等于按下暂停键），
+                    # 重发最后一帧，让设备画面定格但不判定断流。
+                    if last_payloads:
+                        pts = clock.next_video_pts(frames_sent, fps)
+                        try:
+                            for i, payload in enumerate(last_payloads):
+                                sender.send(Kind.JPEG, pts, payload,
+                                            protocol.VIDEO_CONTINUES if i else 0)
+                        except SessionError as exc:
+                            log(f"  暂停期间发送失败: {exc}")
+                            stop.set()
+                            break
+                        frames_sent += 1
+                    time.sleep(1.0 / max(1, fps))
+                    continue
                 raw = _recv_pcm(vsock, FRAME_BYTES, stop)
                 if raw is None:
                     log(f"  视频源结束（已发 {frames_sent} 帧）")
@@ -317,6 +347,7 @@ def stream(conn: socket.socket, resolve, stop: threading.Event | None = None,
                 mask = None
                 compressed = frames.compress_stripes(raw, mask)
                 payloads = frames.pack_stripes(compressed)
+                last_payloads = payloads
                 pts = clock.next_video_pts(frames_sent, fps)
                 try:
                     for i, payload in enumerate(payloads):
@@ -326,8 +357,6 @@ def stream(conn: socket.socket, resolve, stop: threading.Event | None = None,
                     log(f"  视频发送失败（第 {frames_sent + 1} 帧）: {exc}")
                     stop.set()
                     break
-                shown[:] = raw
-                have_shown = True
                 frames_sent += 1
                 if frames_sent == 1:
                     log(f"  首帧已发出（{len(payloads)} 个包，{len(raw)} 字节原图）")
@@ -342,8 +371,22 @@ def stream(conn: socket.socket, resolve, stop: threading.Event | None = None,
             return
         asock.settimeout(10.0)
         chunks = 0
+        silence = bytes(PCM_CHUNK)
         with asock:
             while not stop.is_set():
+                if paused.is_set():
+                    # 暂停时也要喂：音频 pts 必须严格每包 +40ms，
+                    # 断了时钟，恢复后整条时间轴就对不上了。
+                    try:
+                        sender.send(Kind.PCM, clock.next_audio_pts(),
+                                    encoder.encode_pcm(silence))
+                    except SessionError as exc:
+                        log(f"  暂停期间音频发送失败: {exc}")
+                        stop.set()
+                        break
+                    chunks += 1
+                    time.sleep(AUDIO_CHUNK_MS / 1000.0)
+                    continue
                 pcm = _recv_pcm(asock, PCM_CHUNK, stop)
                 if pcm is None:
                     log(f"  音频源结束（已发 {chunks} 块）")

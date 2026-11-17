@@ -225,6 +225,21 @@ class BiliClient:
             })
         return out
 
+    def login_state(self) -> tuple[bool, str]:
+        """真实校验 Cookie 还在不在，返回 (是否有效, 昵称)。
+
+        `logged_in` 只说明"配置里填了 SESSDATA"，不等于 Cookie 还有效——
+        Cookie 过期后推荐流照样能拉（游客也有推荐），只有 /api/me、收藏、私信会挂。
+        之前 health 拿"配了没配"冒充登录状态，排查时白绕一圈。
+        """
+        try:
+            nav = self._get("/x/web-interface/nav", {}, wbi=False) or {}
+        except BiliError:
+            return False, ""
+        if not nav.get("isLogin"):
+            return False, ""
+        return True, str(nav.get("uname") or "")
+
     # ---------------- 个人主页 ----------------
     def me(self) -> dict:
         """当前账号概要，供设备个人主页显示。设备屏幕只有 320×240，字段越少越好。"""

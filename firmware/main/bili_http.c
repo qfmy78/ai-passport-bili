@@ -453,6 +453,36 @@ esp_err_t bili_request_favorite(const char *host, uint16_t port, const char *dev
     return ESP_OK;
 }
 
+esp_err_t bili_request_pause(const char *host, uint16_t port, const char *device, bool paused)
+{
+    char url[192];
+    snprintf(url, sizeof url, "http://%s:%u/api/pause", host, (unsigned)port);
+    char body[128];
+    snprintf(body, sizeof body, "{\"device\":\"%s\",\"paused\":%s}", device,
+             paused ? "true" : "false");
+
+    esp_http_client_config_t cfg = {
+        .url = url,
+        .method = HTTP_METHOD_POST,
+        .timeout_ms = 8000,
+        .buffer_size = 512,
+    };
+    esp_http_client_handle_t cli = esp_http_client_init(&cfg);
+    if (!cli) {
+        return ESP_ERR_NO_MEM;
+    }
+    esp_http_client_set_header(cli, "Content-Type", "application/json");
+    esp_http_client_set_post_field(cli, body, (int)strlen(body));
+    esp_err_t err = esp_http_client_perform(cli);
+    int status = esp_http_client_get_status_code(cli);
+    esp_http_client_cleanup(cli);
+    if (err != ESP_OK || status != 200) {
+        ESP_LOGW(TAG, "pause(%d) -> %s/%d", (int)paused, esp_err_to_name(err), status);
+        return err != ESP_OK ? err : ESP_ERR_INVALID_RESPONSE;
+    }
+    return ESP_OK;
+}
+
 void bili_device_id(char out[13])
 {
     uint8_t mac[6] = { 0 };

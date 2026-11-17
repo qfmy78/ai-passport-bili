@@ -27,7 +27,7 @@
 | 个人主页 | ✅ | 昵称、等级、关注/粉丝/收藏数、硬币 |
 | 我的收藏夹 | ✅ | 收藏夹列表 → 视频列表 → 直接播放 |
 | 私信 | ✅ | 会话列表 + 进入看历史对话（只读） |
-| 播放中按 OK | ✅ | 仅音频 / 静音 / 收藏 当前视频 |
+| 播放中按 OK | ✅ | 仅音频 / 静音 / 收藏；打开菜单自动暂停，关闭继续 |
 | 音量、亮度 | ✅ | 长按上下键调音量，OK 双击调亮度 |
 | 发弹幕、发私信 | ❌ | 未实现（协议是只读的） |
 
@@ -74,8 +74,9 @@ BILI_BUVID3=...
 TV_PORT=10745              # 控制端口，媒体端口 = 控制端口 + 1
 TV_PAIRING_CODE=ABCD       # 设备配网时填这个
 TV_QUALITY=standard        # smooth / standard / ultra
-TV_FPS=12                  # 实测 12~15 是 C3 的舒适区
+TV_FPS=12                  # 实测 12~15 是 C3 的舒适区，18 以上会一顿一顿
 TV_ZLIB_LEVEL=3            # 条带压缩级别，6 会把 2 核 VPS 跑满
+TV_AUDIO=1                 # 设 0 会卡在彩条上（固件等音频时钟才开画），静音请在设备上切
 ```
 
 ### 2. 固件
@@ -109,6 +110,7 @@ TV_ZLIB_LEVEL=3            # 条带压缩级别，6 会把 2 核 VPS 跑满
 | GET | `/api/favorites` | 收藏夹列表 |
 | GET | `/api/favorites/items?media_id=` | 收藏夹内容 |
 | POST | `/api/favorite` | 收藏 `{device, bvid}` |
+| POST | `/api/pause` | 暂停/恢复 `{device, paused}` |
 | GET | `/api/messages` | 私信会话 |
 | GET | `/api/messages/thread?talker=` | 会话历史 |
 | POST | `/api/tv/activate` | 设备配对，返回 `{host, port, ticket}` |
@@ -150,6 +152,8 @@ TV_ZLIB_LEVEL=3            # 条带压缩级别，6 会把 2 核 VPS 跑满
 9. **私信历史不在 `session_svr` 下。** 列会话是 `/session_svr/v1/session_svr/get_sessions`，读历史是 `/svr_sync/v1/svr_sync/fetch_session_msgs`。按"同类接口同前缀"的直觉去猜，会一直 404。
 
 10. **增量发送（只发变化条带）在这版固件上不可用。** 协议文档说零长度条带"设备不重绘"，实测设备是"集齐一帧的条带才绘制"，收到不完整的帧就一直等，帧率掉到 1~2。已回退为整帧发送。
+
+11. **"暂停"不能只在设备端不画。** 那只是丢帧，退出菜单后画面会直接跳到新位置，中间几秒的内容永久丢失。真正的暂停要服务端停下推进：**不读 ffmpeg**（管道写满后 ffmpeg 自己阻塞），同时继续按帧率重发最后一帧、按 40 ms 发静音包——否则设备会因没数据判定断流，音频时钟一断，恢复后整条时间轴就错位了。
 
 ## 已知限制
 

@@ -60,6 +60,10 @@ static void action_task(void *arg) {
         if(code==PASSPORT_TV_ACTION_FAVORITE && current_bvid[0]){
             esp_err_t e=bili_request_favorite(connection.host,connection.port,device,current_bvid);
             if(e!=ESP_OK)ESP_LOGW(TAG,"收藏失败: %s",esp_err_to_name(e));
+        } else if(code==PASSPORT_TV_ACTION_PAUSE || code==PASSPORT_TV_ACTION_RESUME){
+            bool paused=code==PASSPORT_TV_ACTION_PAUSE;
+            esp_err_t e=bili_request_pause(connection.host,connection.port,device,paused);
+            if(e!=ESP_OK)ESP_LOGW(TAG,"暂停请求失败: %s",esp_err_to_name(e));
         }
     }
 }

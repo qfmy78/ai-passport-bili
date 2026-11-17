@@ -48,6 +48,8 @@ static atomic_bool s_audio_only;
 // 静音：画面照常，音频包照收、时钟照走，只把解码结果换成静音块。
 // 之前这条路也重启过，但真因是 pump_keys 返回值被当成"换台"，与静音本身无关。
 static atomic_bool s_audio_muted;
+// 覆盖层是否打开，用来在开/关的边沿通知宿主暂停或恢复。
+static bool s_overlay_open;
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/idf_additions.h"
@@ -3033,6 +3035,15 @@ static bool pump_keys(uint32_t wait_ms) {
         first=false;
         process_key(&item);
     }
+    // 覆盖层一开一关就告诉宿主：服务端据此真正停住推进。
+    // 只在设备端"不画"是没用的——那只是丢帧，退出菜单后画面会跳到新位置，
+    // 中间那几秒的内容就永远看不到了。
+    bool overlay_open = s.menu.view!=UI_VIEW_VIDEO;
+    if (overlay_open!=s_overlay_open) {
+        s_overlay_open=overlay_open;
+        if (s_action) s_action(overlay_open?PASSPORT_TV_ACTION_PAUSE
+                                          :PASSPORT_TV_ACTION_RESUME);
+    }
     char chosen[AV_CHANNEL_ID_MAX];
     ui_action_t action=ui_menu_take_action(&s.menu,chosen,sizeof(chosen));
     if(action==UI_ACTION_AUDIO_ONLY) {
@@ -3777,6 +3788,7 @@ esp_err_t ft_tv_start(const ft_tv_config_t *c) {
     s_action=c->action;
     atomic_store(&s_audio_only,false);
     atomic_store(&s_audio_muted,false);
+    s_overlay_open=false;
     s_prepare=c->prepare;
     atomic_store(&s_setup_request,false);
     // Session loop: allocates nothing large itself; sessions do, and free on exit.
