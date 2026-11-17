@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>把 B 站装进 AI Passport | 基于 ESP32 与 Linux 推流的硬核 DIY 方案</title>
+<meta name="description" content="一个初中生极客的开源 DIY 项目：基于 ESP32 与 Linux 服务端推流，破解 Wbi 签名，在 1.47 寸屏上跑起哔哩哔哩轻量客户端。">
+<meta name="author" content="AI Passport Community">
+<meta name="theme-color" content="#0d1117">
+<meta name="color-scheme" content="dark">
+
+<!-- Open Graph / 社交分享 -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://qfmy78.github.io/ai-passport-bili/">
+<meta property="og:title" content="把 B 站装进 AI Passport">
+<meta property="og:description" content="基于 ESP32 与 Linux 推流的硬核 DIY 方案 · 1.47 寸屏 · 10-20FPS · 音频完美同步">
+<meta property="og:image" content="https://qfmy78.github.io/ai-passport-bili/og-cover.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:video" content="https://qfmy78.github.io/ai-passport-bili/demo2.mp4">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="把 B 站装进 AI Passport">
+<meta name="twitter:description" content="基于 ESP32 与 Linux 推流的硬核 DIY 方案">
+<meta name="twitter:image" content="https://qfmy78.github.io/ai-passport-bili/og-cover.png">
+<link rel="canonical" href="https://qfmy78.github.io/ai-passport-bili/">
+
+<style>
+/* =========================================================
+   设计令牌 —— 赛博朋克暗黑主题
+   ========================================================= */
+:root {
+  --bg:            #0d1117;
+  --bg-deep:       #080b10;
+  --surface:       #11161f;
+  --surface-2:     #141b26;
+  --line:          #1f2937;
+  --line-soft:     #18202b;
+
+  --cyan:          #00ffcc;
+  --cyan-dim:      #0bbf9b;
+  --violet:        #a855f7;
+  --blue:          #3b82f6;
+  --green:         #39ff88;
+
+  --text:          #e6edf3;
+  --text-dim:      #9aa7b4;
+  --text-faint:    #5c6b7a;
+
+  /* 拉丁字符走等宽字体，中文交给系统黑体——避免等宽回退导致的中文字距过散 */
+  --mono: ui-monospace, "JetBrains Mono", "Cascadia Code", "SF Mono",
+          Consolas, "Liberation Mono", Menlo, monospace,
+          "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+
+  --radius: 4px;
+  --maxw: 1080px;
+  --ease: cubic-bezier(.4, 0, .2, 1);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  scroll-behavior: smooth;
+  /* 锚点跳转时避开顶部留白 */
+  scroll-padding-top: 2rem;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 16px;
+  line-height: 1.7;
+  letter-spacing: .01em;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* 背景层：细网格 + 双色径向辉光，纯粹用 CSS 叠出来 */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background-image:
+    linear-gradient(rgba(0, 255, 204, .035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 255, 204, .035) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 120% 80% at 50% 0%, #000 20%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 120% 80% at 50% 0%, #000 20%, transparent 75%);
+  pointer-events: none;
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(65% 48% at 50% -8%,  rgba(0, 255, 204, .16), transparent 62%),
+    radial-gradient(48% 42% at 88% 12%, rgba(168, 85, 247, .15), transparent 66%),
+    radial-gradient(55% 48% at 6% 38%,  rgba(59, 130, 246, .10), transparent 66%);
+  pointer-events: none;
+}
+
+/* 极淡的扫描线，只在支持动画的设备上出现 */
+.scanlines {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: .35;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, .022) 0 1px,
+    transparent 1px 3px
+  );
+}
+
+::selection { background: rgba(0, 255, 204, .25); color: #fff; }
+
+a { color: var(--cyan); text-decoration: none; }
+
+/* 键盘可达性：统一的焦点指示 */
+:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* =========================================================
+   布局容器
+   ========================================================= */
+.wrap {
+  width: 100%;
+  max-width: var(--maxw);
+  margin-inline: auto;
+  padding-inline: clamp(1.1rem, 4vw, 2.5rem);
+}
+
+main { position: relative; z-index: 2; }
+
+section { padding-block: clamp(4rem, 9vw, 7rem); }
+
+/* 区块小标题：// 01 —— HERO 风格 */
+.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: .7rem;
+  margin: 0 0 1.6rem;
+  font-size: .78rem;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--cyan-dim);
+}
+.eyebrow::before {
+  content: "//";
+  color: var(--violet);
+  letter-spacing: 0;
+}
+.eyebrow::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line) 0%, transparent 100%);
+}
+
+/* =========================================================
+   1. HERO
+   ========================================================= */
+.hero {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  padding-block: clamp(3rem, 8vw, 5rem);
+}
+
+/* 顶部状态条，模拟设备开机自检 */
+.statusbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem 1.4rem;
+  margin-bottom: clamp(2.5rem, 8vw, 5rem);
+  font-size: .72rem;
+  letter-spacing: .12em;
+  color: var(--text-faint);
+  text-transform: uppercase;
+}
+.statusbar b {
+  color: var(--cyan);
+  font-weight: 500;
+}
+.statusbar .dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: .45rem;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+  animation: pulse 2.4s var(--ease) infinite;
+  vertical-align: middle;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1;   box-shadow: 0 0 8px var(--green); }
+  50%      { opacity: .35; box-shadow: 0 0 2px var(--green); }
+}
+
+.hero h1 {
+  margin: 0 0 1.5rem;
+  font-size: clamp(2.1rem, 7.2vw, 4.4rem);
+  line-height: 1.12;
+  font-weight: 700;
+  letter-spacing: -.02em;
+  color: #fff;
+  text-shadow:
+    0 0 22px rgba(0, 255, 204, .30),
+    0 0 64px rgba(168, 85, 247, .18);
+}
+
+/* 标题里高亮的关键词 */
+.hero h1 .hl {
+  color: var(--cyan);
+  text-shadow:
+    0 0 14px rgba(0, 255, 204, .55),
+    0 0 48px rgba(0, 255, 204, .25);
+}
+
+.hero .subtitle {
+  margin: 0 0 2.6rem;
+  max-width: 46ch;
+  font-size: clamp(.95rem, 2.1vw, 1.12rem);
+  color: var(--text-dim);
+  border-left: 2px solid rgba(0, 255, 204, .45);
+  padding-left: 1rem;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .9rem;
+}
+
+/* 按钮 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: .55rem;
+  padding: .85rem 1.5rem;
+  border-radius: var(--radius);
+  font-family: inherit;
+  font-size: .9rem;
+  letter-spacing: .06em;
+  border: 1px solid transparent;
+  transition: transform .18s var(--ease), box-shadow .25s var(--ease),
+              background-color .25s var(--ease), color .25s var(--ease),
+              border-color .25s var(--ease);
+  will-change: transform;
+}
+.btn:hover { transform: translateY(-2px); }
+.btn:active { transform: translateY(0); }
+
+.btn-primary {
+  background: rgba(0, 255, 204, .07);
+  border-color: rgba(0, 255, 204, .5);
+  color: var(--cyan);
+  box-shadow: 0 0 0 0 rgba(0, 255, 204, 0);
+}
+.btn-primary:hover {
+  background: rgba(0, 255, 204, .14);
+  border-color: var(--cyan);
+  box-shadow: 0 0 26px rgba(0, 255, 204, .22);
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: rgba(168, 85, 247, .45);
+  color: #c9a7ff;
+}
+.btn-ghost:hover {
+  border-color: var(--violet);
+  color: #e3d0ff;
+  box-shadow: 0 0 26px rgba(168, 85, 247, .22);
+}
+
+.btn svg { flex: none; }
+
+/* =========================================================
+   2. DEMO 视频区
+   ========================================================= */
+.demo { padding-top: 0; }
+
+.section-title {
+  margin: 0 0 .7rem;
+  font-size: clamp(1.35rem, 3.6vw, 1.9rem);
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: -.01em;
+}
+.section-title em {
+  font-style: normal;
+  color: var(--cyan);
+  text-shadow: 0 0 16px rgba(0, 255, 204, .4);
+}
+.section-desc {
+  margin: 0 0 2.4rem;
+  max-width: 58ch;
+  color: var(--text-dim);
+  font-size: .94rem;
+}
+
+/* 赛博边框：外层发光 + 四角括号 */
+.screen {
+  position: relative;
+  max-width: 880px;
+  margin-inline: auto;
+  padding: 10px;
+  background:
+    linear-gradient(160deg, rgba(0, 255, 204, .10), rgba(168, 85, 247, .10) 60%, transparent);
+  border: 1px solid rgba(0, 255, 204, .35);
+  border-radius: 6px;
+  box-shadow:
+    0 0 0 1px rgba(0, 255, 204, .08),
+    0 0 40px rgba(0, 255, 204, .16),
+    0 0 90px rgba(168, 85, 247, .10),
+    inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+
+/* 四角括号 */
+.screen::before,
+.screen::after {
+  content: "";
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--cyan);
+  pointer-events: none;
+  opacity: .85;
+  filter: drop-shadow(0 0 6px rgba(0, 255, 204, .7));
+}
+.screen::before {
+  top: -1px; left: -1px;
+  border-right: 0; border-bottom: 0;
+}
+.screen::after {
+  bottom: -1px; right: -1px;
+  border-left: 0; border-top: 0;
+}
+
+/* 视频本体 */
+.screen video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  border-radius: 3px;
+  background: #05080c;
+  object-fit: cover;
+}
+
+/* 视频下方的机读信息条 */
+.screen-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem 1.6rem;
+  padding: .7rem .3rem .2rem;
+  font-size: .7rem;
+  letter-spacing: .1em;
+  color: var(--text-faint);
+  text-transform: uppercase;
+}
+.screen-meta span::before {
+  content: "› ";
+  color: var(--violet);
+}
+
+/* =========================================================
+   3. 核心特性 四宫格
+   ========================================================= */
+.grid-features {
+  display: grid;
+  /* 移动端单列，平板及以上固定 2×2 四宫格 */
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  margin-top: 2.6rem;
+  list-style: none;
+  padding: 0;
+}
+@media (min-width: 720px) {
+  .grid-features { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.card {
+  position: relative;
+  padding: 1.7rem 1.5rem 1.6rem;
+  background: linear-gradient(170deg, var(--surface-2), var(--surface));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color .25s var(--ease), box-shadow .25s var(--ease),
+              transform .25s var(--ease);
+}
+/* 悬停时从左上角渗出的青色光 */
+.card::before {
+  content: "";
+  position: absolute;
+  top: -60px; left: -60px;
+  width: 140px; height: 140px;
+  background: radial-gradient(circle, rgba(0, 255, 204, .22), transparent 70%);
+  opacity: 0;
+  transition: opacity .3s var(--ease);
+  pointer-events: none;
+}
+.card:hover,
+.card:focus-within {
+  border-color: rgba(0, 255, 204, .45);
+  box-shadow: 0 0 30px rgba(0, 255, 204, .10), 0 12px 30px rgba(0, 0, 0, .45);
+  transform: translateY(-3px);
+}
+.card:hover::before,
+.card:focus-within::before { opacity: 1; }
+
+.card-idx {
+  display: block;
+  margin-bottom: 1.1rem;
+  font-size: .72rem;
+  letter-spacing: .2em;
+  color: var(--text-faint);
+}
+.card:hover .card-idx { color: var(--violet); }
+
+.card h3 {
+  margin: 0 0 .6rem;
+  font-size: 1.06rem;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: .01em;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+/* 标题前的小方块，终端光标感 */
+.card h3::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: none;
+  background: var(--cyan);
+  box-shadow: 0 0 10px rgba(0, 255, 204, .85);
+}
+
+.card p {
+  margin: 0;
+  font-size: .875rem;
+  line-height: 1.75;
+  color: var(--text-dim);
+}
+
+/* =========================================================
+   4. 部署说明 —— 终端窗口
+   ========================================================= */
+.term {
+  margin-top: 2.4rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #05080c;
+  box-shadow:
+    0 0 0 1px rgba(57, 255, 136, .06),
+    0 0 34px rgba(57, 255, 136, .07),
+    0 18px 50px rgba(0, 0, 0, .55);
+  overflow: hidden;
+}
+
+/* 终端标题栏 */
+.term-bar {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding: .65rem .9rem;
+  background: linear-gradient(180deg, #131a24, #0e141c);
+  border-bottom: 1px solid var(--line);
+}
+.term-dots {
+  display: flex;
+  gap: .4rem;
+}
+.term-dots i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #2a3441;
+  display: block;
+}
+.term-dots i:nth-child(1) { background: #ff5f57; }
+.term-dots i:nth-child(2) { background: #febc2e; }
+.term-dots i:nth-child(3) { background: #28c840; }
+
+.term-title {
+  flex: 1;
+  text-align: center;
+  font-size: .72rem;
+  letter-spacing: .12em;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 终端正文 */
+.term-body {
+  margin: 0;
+  padding: 1.3rem clamp(1rem, 3vw, 1.7rem) 1.5rem;
+  font-family: var(--mono);
+  font-size: clamp(.76rem, 2vw, .86rem);
+  line-height: 1.95;
+  color: var(--green);
+  overflow-x: auto;
+  tab-size: 2;
+  text-shadow: 0 0 10px rgba(57, 255, 136, .28);
+  white-space: pre;
+}
+.term-body .cmt { color: #4a5c4f; text-shadow: none; }
+.term-body .cmd { color: var(--green); }
+.term-body .ps1 {
+  color: var(--cyan);
+  text-shadow: 0 0 10px rgba(0, 255, 204, .4);
+  user-select: none;
+}
+.term-body .flag { color: #7ee0a8; }
+.term-body .cursor {
+  display: inline-block;
+  width: .6em;
+  height: 1.05em;
+  margin-left: .15em;
+  background: var(--green);
+  vertical-align: -0.18em;
+  animation: blink 1.15s steps(2, start) infinite;
+  box-shadow: 0 0 10px rgba(57, 255, 136, .8);
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* 部署小提示 */
+.deploy-note {
+  margin: 1.3rem 0 0;
+  max-width: 84ch;
+  font-size: .8rem;
+  color: var(--text-faint);
+  line-height: 1.8;
+}
+.deploy-note code {
+  color: var(--cyan-dim);
+  background: rgba(0, 255, 204, .07);
+  border: 1px solid rgba(0, 255, 204, .18);
+  padding: .05rem .35rem;
+  border-radius: 3px;
+  font-size: .95em;
+}
+
+/* =========================================================
+   5. 免责声明
+   ========================================================= */
+.foot {
+  position: relative;
+  z-index: 2;
+  border-top: 1px solid var(--line-soft);
+  padding-block: 2.2rem 2.6rem;
+}
+.foot-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem 2rem;
+}
+.foot p {
+  margin: 0;
+  max-width: 62ch;
+  font-size: .76rem;
+  line-height: 1.85;
+  color: #7f8d9b; /* 小字号下保证 4.5:1 以上对比度 */
+}
+.foot p strong {
+  color: #b8860b;
+  font-weight: 500;
+}
+.foot .sig {
+  font-size: .7rem;
+  letter-spacing: .12em;
+  color: var(--line);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.foot .sig span { color: var(--cyan-dim); }
+
+/* =========================================================
+   入场动画（尊重 prefers-reduced-motion）
+   ========================================================= */
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity .6s var(--ease), transform .6s var(--ease);
+}
+.reveal.is-in {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+  .reveal { opacity: 1; transform: none; }
+  .scanlines { display: none; }
+}
+
+/* 小屏微调 */
+@media (max-width: 640px) {
+  .statusbar { font-size: .64rem; letter-spacing: .08em; }
+  .hero .subtitle { border-left-width: 1px; padding-left: .8rem; }
+  .foot-inner { flex-direction: column; }
+}
+</style>
+</head>
+<body>
+<div class="scanlines" aria-hidden="true"></div>
+
+<main>
+
+  <!-- ============ 1. HERO ============ -->
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="wrap">
+      <div class="statusbar" aria-hidden="true">
+        <span><i class="dot"></i>SYS · ONLINE</span>
+        <span>LINK <b>ESP32</b></span>
+        <span>PANEL <b>1.47"</b></span>
+        <span>FRAME <b>10-20 FPS</b></span>
+        <span>WBI <b>BYPASSED</b></span>
+      </div>
+
+      <h1 id="hero-title">把 B 站装进<br><span class="hl">AI Passport</span></h1>
+      <p class="subtitle">基于 ESP32 与 Linux 推流的硬核 DIY 方案</p>
+
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="https://github.com/qfmy78/ai-passport-bili" target="_blank" rel="noopener noreferrer">
+          <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+          </svg>
+          查看源码 (GitHub)
+        </a>
+        <a class="btn btn-ghost" href="#deploy">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 4l4 4-4 4M9 12h4"/>
+          </svg>
+          了解部署
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 2. 演示视频 ============ -->
+  <section class="demo" id="demo" aria-labelledby="demo-title">
+    <div class="wrap">
+      <p class="eyebrow">Demo Reel</p>
+      <h2 class="section-title" id="demo-title">实机演示<em>_</em></h2>
+      <p class="section-desc">通电 → 连热点 → 填配对码 → 选片 → 播放。以下是 AI Passport（ESP32-C3）在 320×180 下的真实运行画面。</p>
+
+      <div class="screen reveal">
+        <video
+          controls
+          playsinline
+          preload="metadata"
+          width="1280" height="720"
+          poster="poster.svg"
+          aria-label="哔哩哔哩轻量客户端在 ESP32 设备上的实机演示视频">
+          <source src="demo2.mp4" type="video/mp4">
+          你的浏览器不支持内嵌视频播放，请
+          <a href="demo2.mp4">点此下载演示视频</a>。
+        </video>
+        <div class="screen-meta" aria-hidden="true">
+          <span>CH · DEMO-02</span>
+          <span>RES · 1280×720</span>
+          <span>STREAM · RGB RAW</span>
+          <span>SYNC · AUDIO OK</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 3. 核心特性 ============ -->
+  <section class="features" id="features" aria-labelledby="feat-title">
+    <div class="wrap">
+      <p class="eyebrow">Core Features</p>
+      <h2 class="section-title" id="feat-title">四件让它跑起来的<em>事</em></h2>
+      <p class="section-desc">没有花哨的架构，全是能被复现的工程取舍。</p>
+
+      <ul class="grid-features">
+        <li class="card reveal">
+          <span class="card-idx">01 / PERF</span>
+          <h3>极致轻量</h3>
+          <p>1.47 寸屏，10-20FPS，音频完美同步。把每一帧都当成预算来花。</p>
+        </li>
+        <li class="card reveal">
+          <span class="card-idx">02 / SIGN</span>
+          <h3>Wbi 破解</h3>
+          <p>纯后端签名处理，突破限制，支持视频 / 收藏夹。客户端只负责显示。</p>
+        </li>
+        <li class="card reveal">
+          <span class="card-idx">03 / STREAM</span>
+          <h3>硬核推流</h3>
+          <p>RGB332 条带裸流，无撕裂，低延迟。跳过解码器，直接把像素喂给屏幕。</p>
+        </li>
+        <li class="card reveal">
+          <span class="card-idx">04 / OPEN</span>
+          <h3>完全开源</h3>
+          <p>客户端与服务器端代码全公开。想改哪一行，就改哪一行。</p>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============ 4. 部署说明 ============ -->
+  <section id="deploy" aria-labelledby="deploy-title">
+    <div class="wrap">
+      <p class="eyebrow">Deploy</p>
+      <h2 class="section-title" id="deploy-title">服务器端部署<em>_</em></h2>
+      <p class="section-desc">一台常开的 Linux 机器（1 核 1 GB 起，2 核 896 MB 实测够用）+ 一块 AI Passport，就能跑起来。</p>
+
+      <div class="term reveal">
+        <div class="term-bar">
+          <div class="term-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div class="term-title">user@server: ~/ai-passport-bili</div>
+        </div>
+        <pre class="term-body"><code><span class="cmt"># 1. 拉取仓库</span>
+<span class="ps1">$</span> <span class="cmd">git clone https://github.com/qfmy78/ai-passport-bili.git</span>
+<span class="ps1">$</span> <span class="cmd">cd ai-passport-bili</span>
+
+<span class="cmt"># 2. 一键装环境：Python 3.11 + ffmpeg + venv + systemd</span>
+<span class="cmt">#    过程中会交互式收集 B 站 Cookie 和配对码</span>
+<span class="ps1">$</span> <span class="cmd">sudo bash deploy/install.sh</span>
+
+<span class="cmt"># 3. 取配对码，等下填进设备的配网页</span>
+<span class="ps1">$</span> <span class="cmd">sudo bash deploy/install.sh --show-pairing</span>
+
+<span class="cmt"># 4. 自检：登录状态、已配对数</span>
+<span class="ps1">$</span> <span class="cmd">curl -s localhost:10745/api/health</span>
+
+<span class="cmt"># 5. 跟日志（播放出问题时先看这里）</span>
+<span class="ps1">$</span> <span class="cmd">journalctl -u passport-bili -f</span>
+<span class="ps1">$</span> <span class="cursor" aria-hidden="true"></span></code></pre>
+      </div>
+
+      <p class="deploy-note">
+        配置文件在 <code>/etc/passport-bili/env</code>（权限 600），至少要填 <code>BILI_SESSDATA</code>；
+        控制端口 <code>10745</code>、媒体端口 <code>10746</code> 记得放行。设备上电后连热点
+        <code>PassportTV-xxxx</code> → 打开 <code>192.168.4.1</code> → 填服务器地址、端口和配对码。
+        固件需要 ESP-IDF v5.5，用 <code>./tools/build.sh</code> 与 <code>./tools/flash.sh COM8</code> 编译烧录。
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============ 5. 免责声明 ============ -->
+<footer class="foot">
+  <div class="wrap foot-inner">
+    <p>
+      <strong>免责声明：</strong>本项目仅供学习交流，请勿用于商业用途，因滥用爬虫导致的 B 站账号风控或封禁后果自负。
+    </p>
+    <p class="sig">BUILT BY A STUDENT · <span>AI PASSPORT</span></p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* 滚动入场：逐块淡入，无动画偏好时直接显示 */
+  var items = document.querySelectorAll(".reveal");
+  if (reduced || !("IntersectionObserver" in window)) {
+    items.forEach(function (el) { el.classList.add("is-in"); });
+  } else {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (entry.isIntersecting === true) {
+          entry.target.classList.add("is-in");
+          io.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.12, rootMargin: "0px 0px -8% 0px" });
+
+    items.forEach(function (el) { io.observe(el); });
+  }
+
+  /* 视频加载失败时给出可读提示，避免出现一块黑框 */
+  var video = document.querySelector(".screen video");
+  if (video !== null) {
+    video.addEventListener("error", function () {
+      var hint = document.createElement("p");
+      hint.textContent = "视频加载失败：请确认 demo2.mp4 与 index.html 位于同一目录。";
+      hint.style.cssText = "margin:0;padding:.9rem .3rem 0;font-size:.78rem;color:#ff8a8a;";
+      if (video.parentNode !== null) {
+        video.parentNode.insertBefore(hint, video.nextSibling);
+      }
+    });
+    /* 未加载到元数据前不锁死高度，避免布局跳动（CLS） */
+    video.addEventListener("loadedmetadata", function () {
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        video.style.aspectRatio = video.videoWidth + " / " + video.videoHeight;
+      }
+    });
+  }
+})();
+</script>
+</body>
+</html>
