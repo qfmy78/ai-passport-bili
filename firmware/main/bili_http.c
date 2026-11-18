@@ -156,7 +156,7 @@ esp_err_t bili_fetch_feed(const char *host, uint16_t port, bili_list_t *out,
     return n ? ESP_OK : ESP_ERR_NOT_FOUND;
 }
 
-esp_err_t bili_fetch_comments(const char *host, uint16_t port, uint32_t aid,
+esp_err_t bili_fetch_comments(const char *host, uint16_t port, const char *bvid,
                               bili_comment_list_t *out)
 {
     if (!out) {
@@ -166,8 +166,11 @@ esp_err_t bili_fetch_comments(const char *host, uint16_t port, uint32_t aid,
     out->selected = 0;
     out->scroll = 0;
 
-    char path[64];
-    snprintf(path, sizeof path, "/api/comments?aid=%lu", (unsigned long)aid);
+    if (!bvid || !bvid[0]) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    char path[96];
+    snprintf(path, sizeof path, "/api/comments?bvid=%s&size=20", bvid);
 
     esp_err_t err = http_get(host, port, path, 12000);
     if (err != ESP_OK) {

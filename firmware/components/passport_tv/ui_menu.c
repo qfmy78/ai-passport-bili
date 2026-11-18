@@ -171,6 +171,25 @@ const char *ui_menu_selected(const ui_menu_t *menu)
     return menu->entries[menu->selected].id;
 }
 
+void ui_menu_open_comments(ui_menu_t *menu)
+{
+    if (!menu) return;
+    menu->view = UI_VIEW_COMMENTS;
+    menu->comment_selected = 0;
+    menu->comment_scroll = 0;
+    // 不设超时：看评论是要读的，不能读两秒自己消失。
+    menu->timeout_ms = 0;
+    menu->action = UI_ACTION_NONE;
+}
+
+void ui_menu_set_comments(ui_menu_t *menu, const char *const *lines, unsigned count)
+{
+    if (!menu) return;
+    menu->comments = lines;
+    menu->comment_count = count;
+    menu->comment_rev++;          // 覆盖层看到它变了才会重画
+}
+
 void ui_menu_set_audio(ui_menu_t *menu, bool only)
 {
     if (!menu) return;
@@ -280,9 +299,25 @@ void ui_menu_step(ui_menu_t *menu, int delta)
 void ui_menu_scroll_by(ui_menu_t *menu, int delta, unsigned rows)
 {
     if (menu && menu->view==UI_VIEW_CONTROLS && delta) {
-        int next=((int)menu->controls_selected+delta)%3;
-        menu->controls_selected=(unsigned)(next<0?next+3:next);
+        int next=((int)menu->controls_selected+delta)%4;
+        menu->controls_selected=(unsigned)(next<0?next+4:next);
         ui_menu_keep_open(menu);
+        return;
+    }
+    if (menu && menu->view==UI_VIEW_COMMENTS && delta) {
+        // 逐条移动，不让高亮跑出可视窗口，也不越过首尾。
+        int last=(int)(menu->comment_count?menu->comment_count-1:0);
+        int next=(int)menu->comment_selected+delta;
+        if (next<0) next=0;
+        if (next>last) next=last;
+        menu->comment_selected=(unsigned)next;
+        unsigned rows=menu->visible_rows?menu->visible_rows:1;
+        if (menu->comment_selected<menu->comment_scroll) {
+            menu->comment_scroll=menu->comment_selected;
+        } else if (menu->comment_selected>=menu->comment_scroll+rows) {
+            menu->comment_scroll=menu->comment_selected-rows+1;
+        }
+        menu->timeout_ms=0;        // 评论页没有超时，别在这儿重新计时
         return;
     }
     if (menu && menu->view==UI_VIEW_QUALITY && delta) {
@@ -313,7 +348,7 @@ void ui_menu_scroll_by(ui_menu_t *menu, int delta, unsigned rows)
 void ui_menu_confirm(ui_menu_t *menu)
 {
     if (menu && menu->view==UI_VIEW_CONTROLS) {
-        // 三行：0 = 仅音频，1 = 静音，2 = 收藏当前视频。
+        // 四行：0=仅音频 1=静音 2=评论 3=收藏。
         if (menu->controls_selected==0) {
             menu->audio_only=!menu->audio_only;
             menu->action=UI_ACTION_AUDIO_ONLY;
@@ -322,6 +357,10 @@ void ui_menu_confirm(ui_menu_t *menu)
             menu->audio_muted=!menu->audio_muted;
             menu->action=UI_ACTION_MUTE;
             ui_menu_close(menu);
+        } else if (menu->controls_selected==2) {
+            // 进评论页并通知宿主去拉内容；拉回来之前页面显示"加载中"。
+            ui_menu_open_comments(menu);
+            menu->action=UI_ACTION_COMMENTS;
         } else {
             menu->action=UI_ACTION_FAVORITE;
             ui_menu_close(menu);

@@ -6,7 +6,9 @@
 enum { X=0, W=320, BOTTOM=210, HEADER=26, ROW=24, FOOTER=26,
        LIST_TOP=BOTTOM-HEADER-UI_MENU_OVERLAY_ROWS*ROW-FOOTER,
        QUALITY_TOP=BOTTOM-108,
-       CONTROLS_TOP=BOTTOM-HEADER-3*ROW-FOOTER };
+       CONTROLS_TOP=BOTTOM-HEADER-4*ROW-FOOTER,
+       COMMENTS_TOP=BOTTOM-HEADER-4*ROW-FOOTER };
+#define COMMENT_ROWS 4u
 #define PANEL 0x1082u
 #define FOCUS 0x2249u
 #define ACCENT 0x5DF6u
@@ -17,12 +19,14 @@ static bool stale(const ui_menu_overlay_t *c,const ui_menu_t *m) {
         c->scroll!=m->scroll || c->quality!=m->quality ||
         c->quality_selected!=m->quality_selected || c->revision!=m->revision ||
         c->quality_enabled!=m->quality_enabled || c->count!=m->count ||
-        c->audio_only!=m->audio_only || c->audio_muted!=m->audio_muted;
+        c->audio_only!=m->audio_only || c->audio_muted!=m->audio_muted ||
+        c->comment_rev!=m->comment_rev;
 }
 static void prepare(ui_menu_overlay_t *c,const ui_menu_t *m) {
     c->valid=true;c->view=m->view;
     c->audio_only=m->audio_only;
     c->audio_muted=m->audio_muted;
+    c->comment_rev=m->comment_rev;
     c->selected=m->view==UI_VIEW_CONTROLS?m->controls_selected:m->selected;c->scroll=m->scroll;
     c->quality=m->quality;c->quality_selected=m->quality_selected;
     c->revision=m->revision;c->quality_enabled=m->quality_enabled;c->count=m->count;
@@ -36,15 +40,32 @@ static void prepare(ui_menu_overlay_t *c,const ui_menu_t *m) {
             ui_text_prepare(&c->text[2+i*2],rates[i],76);
         }
     } else if (m->view==UI_VIEW_CONTROLS) {
-        // 三行播放设置：仅音频、静音、收藏。原来这里是「频道 / 清晰度」，
-        // 单频道场景下那两项没有意义，而这两个开关才真正决定流畅度。
+        // 四行播放设置：仅音频、静音、评论、收藏。原来是「频道 / 清晰度」，
+        // 单频道场景下那两项没意义，这几个才真正影响观感。
+        // 槽位：标签 2..5，右值 6..9，页脚 10/11（别和标签撞）。
         ui_text_prepare(&c->text[0],"播放设置",100);
         ui_text_prepare(&c->text[2],"仅音频",160);
         ui_text_prepare(&c->text[3],"静音",160);
-        ui_text_prepare(&c->text[4],"收藏",160);
-        ui_text_prepare(&c->text[5],m->audio_only?"开":"关",64);
-        ui_text_prepare(&c->text[6],m->audio_muted?"开":"关",64);
-        ui_text_prepare(&c->text[7],"当前视频",96);
+        ui_text_prepare(&c->text[4],"评论",160);
+        ui_text_prepare(&c->text[5],"收藏",160);
+        ui_text_prepare(&c->text[6],m->audio_only?"开":"关",64);
+        ui_text_prepare(&c->text[7],m->audio_muted?"开":"关",64);
+        ui_text_prepare(&c->text[8],"查看",64);
+        ui_text_prepare(&c->text[9],"当前视频",96);
+    } else if (m->view==UI_VIEW_COMMENTS) {
+        ui_text_prepare(&c->text[0],"评论",100);
+        c->count=m->comment_count;          // 覆盖层用它判断还有没有内容
+        c->scroll=m->comment_scroll;
+        for (unsigned i=0;i<COMMENT_ROWS;i++) {
+            unsigned index=m->comment_scroll+i;
+            label[0]=0;
+            if (m->comments && index<m->comment_count && m->comments[index]) {
+                snprintf(label,sizeof(label),"%u. %s",index+1,m->comments[index]);
+            } else if (m->comment_count==0) {
+                snprintf(label,sizeof(label),"加载中…");
+            }
+            ui_text_prepare(&c->text[2+i],label,300);
+        }
     } else {
         ui_text_prepare(&c->text[0],"频道",100);
         snprintf(label,sizeof(label),"%s",av_quality_name(m->quality));
@@ -60,8 +81,8 @@ static void prepare(ui_menu_overlay_t *c,const ui_menu_t *m) {
         }
         ui_text_prepare(&c->text[5],av_quality_name(m->quality),64);
     }
-    ui_text_prepare(&c->text[9],"上下选择  OK确认",180);
-    ui_text_prepare(&c->text[10],"长按返回",76);
+    ui_text_prepare(&c->text[10],"上下选择  OK确认",180);
+    ui_text_prepare(&c->text[11],"长按返回",76);
 }
 static void card(ui_surface_t s,int x,int y,int w,int h,uint16_t color) {
     // Four-pixel stepped corners, with every fill clipped to this stripe.
@@ -74,14 +95,18 @@ static void card(ui_surface_t s,int x,int y,int w,int h,uint16_t color) {
     ui_text_fill(s,x+4,y+h-1,w-8,1,color);
 }
 void ui_menu_overlay_begin(ui_menu_overlay_t *c,const ui_menu_t *m) {
-    if (m->view!=UI_VIEW_MENU && m->view!=UI_VIEW_QUALITY && m->view!=UI_VIEW_CONTROLS) {
+    if (m->view!=UI_VIEW_MENU && m->view!=UI_VIEW_QUALITY && m->view!=UI_VIEW_CONTROLS &&
+        m->view!=UI_VIEW_COMMENTS) {
         c->view=m->view;c->valid=false;return;
     }
     if (stale(c,m)) prepare(c,m);
 }
 bool ui_menu_overlay_covers(const ui_menu_overlay_t *c,unsigned y,unsigned rows) {
-    if (!c->valid || !rows || (c->view!=UI_VIEW_MENU && c->view!=UI_VIEW_QUALITY && c->view!=UI_VIEW_CONTROLS)) return false;
-    unsigned top=c->view==UI_VIEW_MENU?LIST_TOP:c->view==UI_VIEW_CONTROLS?CONTROLS_TOP:QUALITY_TOP;
+    if (!c->valid || !rows || (c->view!=UI_VIEW_MENU && c->view!=UI_VIEW_QUALITY &&
+        c->view!=UI_VIEW_CONTROLS && c->view!=UI_VIEW_COMMENTS)) return false;
+    unsigned top=c->view==UI_VIEW_MENU?LIST_TOP:
+        c->view==UI_VIEW_CONTROLS?CONTROLS_TOP:
+        c->view==UI_VIEW_COMMENTS?COMMENTS_TOP:QUALITY_TOP;
     // Only the full-width rectangular interior is opaque. Corner stripes and
     // all visible video still take the normal checked decoder path.
     return y>=top+4u && y<BOTTOM-4u && rows<=BOTTOM-4u-y;
@@ -93,8 +118,11 @@ void ui_menu_overlay_paint(ui_menu_overlay_t *c,const ui_menu_t *m,ui_surface_t 
 void ui_menu_overlay_draw(const ui_menu_overlay_t *c,ui_surface_t s) {
     if (!c->valid) return;
     ui_view_t view=c->view;
-    if (view!=UI_VIEW_MENU && view!=UI_VIEW_QUALITY && view!=UI_VIEW_CONTROLS) return;
-    int top=view==UI_VIEW_MENU?LIST_TOP:view==UI_VIEW_CONTROLS?CONTROLS_TOP:QUALITY_TOP;
+    if (view!=UI_VIEW_MENU && view!=UI_VIEW_QUALITY && view!=UI_VIEW_CONTROLS &&
+        view!=UI_VIEW_COMMENTS) return;
+    int top=view==UI_VIEW_MENU?LIST_TOP:
+        view==UI_VIEW_CONTROLS?CONTROLS_TOP:
+        view==UI_VIEW_COMMENTS?COMMENTS_TOP:QUALITY_TOP;
     if (s.origin_y+s.rows<=top || s.origin_y>=BOTTOM) return;
     card(s,X,top,W,BOTTOM-top,PANEL);
     ui_text_paint(s,X+12,top+6,&c->text[0],UI_COLOR_TEXT);
@@ -112,7 +140,7 @@ void ui_menu_overlay_draw(const ui_menu_overlay_t *c,ui_surface_t s) {
             ui_text_paint(s,X+18,y+4,&c->text[2+i],chosen?UI_COLOR_TEXT:UI_COLOR_DIM);
         }
     } else if (view==UI_VIEW_CONTROLS) {
-        for (unsigned i=0;i<3;i++) {
+        for (unsigned i=0;i<4;i++) {
             int y=top+HEADER+(int)i*ROW;
             bool chosen=i==c->selected;
             if (chosen) {
@@ -120,7 +148,14 @@ void ui_menu_overlay_draw(const ui_menu_overlay_t *c,ui_surface_t s) {
                 ui_text_fill(s,X+10,y+7,2,10,ACCENT);
             }
             ui_text_paint(s,X+18,y+4,&c->text[2+i],chosen?UI_COLOR_TEXT:UI_COLOR_DIM);
-            ui_text_paint(s,X+W-18-c->text[5+i].width,y+4,&c->text[5+i],ACCENT);
+            ui_text_paint(s,X+W-18-c->text[6+i].width,y+4,&c->text[6+i],ACCENT);
+        }
+    } else if (view==UI_VIEW_COMMENTS) {
+        for (unsigned i=0;i<COMMENT_ROWS;i++) {
+            unsigned index=c->scroll+i;
+            if (index>=c->count) break;
+            int y=top+HEADER+(int)i*ROW;
+            ui_text_paint(s,X+12,y+4,&c->text[2+i],UI_COLOR_TEXT);
         }
     } else {
         for (unsigned i=0;i<AV_QUALITY_COUNT;i++) {
@@ -133,6 +168,6 @@ void ui_menu_overlay_draw(const ui_menu_overlay_t *c,ui_surface_t s) {
         }
     }
     ui_text_fill(s,X+12,BOTTOM-FOOTER,W-24,1,UI_COLOR_RULE);
-    ui_text_paint(s,X+12,BOTTOM-FOOTER+6,&c->text[9],UI_COLOR_DIM);
-    ui_text_paint(s,X+W-12-c->text[10].width,BOTTOM-FOOTER+6,&c->text[10],UI_COLOR_DIM);
+    ui_text_paint(s,X+12,BOTTOM-FOOTER+6,&c->text[10],UI_COLOR_DIM);
+    ui_text_paint(s,X+W-12-c->text[11].width,BOTTOM-FOOTER+6,&c->text[11],UI_COLOR_DIM);
 }

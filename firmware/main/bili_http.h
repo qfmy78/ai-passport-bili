@@ -16,7 +16,7 @@
 #define BILI_TITLE_MAX  84     // 26 个汉字 * 3 字节 + 余量
 #define BILI_UP_MAX     40
 #define BILI_BVID_MAX   16
-#define BILI_COMMENT_MAX 12
+#define BILI_COMMENT_MAX 20
 #define BILI_COMMENT_TEXT_MAX 96
 
 typedef struct {
@@ -84,7 +84,8 @@ typedef struct {
 esp_err_t bili_fetch_feed(const char *host, uint16_t port, bili_list_t *out,
                           unsigned page);
 // 拉某个视频的评论。
-esp_err_t bili_fetch_comments(const char *host, uint16_t port, uint32_t aid,
+// 按 bvid 取评论：设备手上只有 bvid，让服务端去换算 aid 更省事。
+esp_err_t bili_fetch_comments(const char *host, uint16_t port, const char *bvid,
                               bili_comment_list_t *out);
 // 告诉服务端"我要看这个视频"，服务端据此启动转码；随后再起 FAV1 会话。
 esp_err_t bili_request_play(const char *host, uint16_t port, const char *device,

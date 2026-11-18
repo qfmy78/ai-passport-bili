@@ -23,6 +23,7 @@ typedef enum {
     UI_VIEW_BRIGHTNESS,  // the backlight level is being set
     UI_VIEW_QUALITY,
     UI_VIEW_CONTROLS,    // fixed channel/quality entry points, outside the list
+    UI_VIEW_COMMENTS,    // 评论区：内容由宿主填，播放器只负责画
 } ui_view_t;
 
 // What the overlay wants the caller to do next.
@@ -34,6 +35,7 @@ typedef enum {
     UI_ACTION_AUDIO_ONLY, // 切到/切回"仅音频"（跳过整帧渲染）
     UI_ACTION_MUTE,       // 切到/切回"静音"（保留画面，不写声音）
     UI_ACTION_FAVORITE,  // ask the host to favourite what is playing
+    UI_ACTION_COMMENTS,  // 用户点了"评论"：请宿主去拉，拉回来用 set_comments 填
 } ui_action_t;
 
 typedef struct {
@@ -71,12 +73,22 @@ typedef struct {
     bool audio_only;
     // 静音开关：画面照常，音频只解码不出声。
     bool audio_muted;
+    // 评论区。内容指向宿主持有的字符串数组，播放器不拷贝、不释放：
+    // 这块 RAM 在播放器里是硬通货，20 条评论再复制一份就是 1.3 KB。
+    const char *const *comments;
+    unsigned comment_count;
+    unsigned comment_selected;
+    unsigned comment_scroll;
+    uint32_t comment_rev;      // 内容换代时自增，覆盖层靠它判断要不要重画
     uint32_t revision; // Channel/name generation, for the video-owned text cache.
 } ui_menu_t;
 
 // Mirror the player's mute flag into the menu so the page shows the right label.
 void ui_menu_set_audio(ui_menu_t *menu, bool muted);
 void ui_menu_set_mute(ui_menu_t *menu, bool muted);
+// 评论区：内容由宿主提供（它是唯一能发 HTTP 的一方）。
+void ui_menu_open_comments(ui_menu_t *menu);
+void ui_menu_set_comments(ui_menu_t *menu, const char *const *lines, unsigned count);
 
 void ui_menu_enable_quality(ui_menu_t *menu, unsigned quality);
 unsigned ui_menu_item_count(const ui_menu_t *menu);

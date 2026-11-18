@@ -75,9 +75,13 @@ typedef struct {
 #define PASSPORT_TV_ACTION_FAVORITE 1
 #define PASSPORT_TV_ACTION_PAUSE    2   // 覆盖层打开：请服务端暂停推进
 #define PASSPORT_TV_ACTION_RESUME   3   // 覆盖层关闭：请服务端恢复
+#define PASSPORT_TV_ACTION_COMMENTS 4   // 用户翻到评论页：请宿主去拉内容
 
 // Key events go here while TV runs (bsp_btn_t, bsp_btn_ev_t as ints).
 void ft_tv_key(int key, int event);
+// 填评论页内容。lines 由调用方持有且必须在评论页开着期间一直有效
+// （播放器不拷贝，省 RAM）。count 为 0 表示还没拉到，页面显示"加载中"。
+void ft_tv_set_comments(const char *const *lines, unsigned count);
 // Queue a metadata-only menu snapshot for local USB acceptance tooling.
 void ft_tv_inspect(void);
 esp_err_t ft_tv_start(const ft_tv_config_t *config);

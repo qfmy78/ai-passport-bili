@@ -208,15 +208,22 @@ class Handler(BaseHTTPRequestHandler):
             except bili_api.BiliError as exc:
                 self.send_json(502, {"error": "bili", "detail": str(exc)})
         elif path == "/api/comments":
+            # 设备手上只有 bvid，让它自己换 aid 得再打一次接口，不如服务端代劳。
+            bvid = q("bvid")
             try:
-                aid = int(q("aid", "0") or 0)
+                size = int(q("size", "12") or 12)
             except ValueError:
+                size = 12
+            size = max(1, min(size, 20))     # 设备评论页只有 20 个槽位
+            try:
+                aid = bili().aid_of(bvid) if bvid else int(q("aid", "0") or 0)
+            except (bili_api.BiliError, ValueError):
                 aid = 0
             if not aid:
                 self.send_json(400, {"error": "bad_aid"})
                 return
             try:
-                self.send_json(200, {"items": bili().comments(aid, 1, 12)})
+                self.send_json(200, {"items": bili().comments(aid, 1, size)})
             except bili_api.BiliError as exc:
                 self.send_json(502, {"error": "bili", "detail": str(exc)})
         elif path == "/api/me":

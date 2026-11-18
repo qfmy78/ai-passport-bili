@@ -2836,6 +2836,8 @@ static void process_key(const key_ev_t *item) {
             if (item->ev==BSP_BTN_CLICK) {
                 if (s.menu.view==UI_VIEW_MENU || s.menu.view==UI_VIEW_QUALITY || s.menu.view==UI_VIEW_CONTROLS) {
                     ui_menu_confirm(&s.menu);
+                } else if (s.menu.view==UI_VIEW_COMMENTS) {
+                    // 评论页 OK 不做事：这一页是用来读的，误触退出最烦人
                 } else {
                     ui_menu_close(&s.menu);
                 }
@@ -2861,7 +2863,9 @@ static void process_key(const key_ev_t *item) {
             return;
         }
         if (item->ev==BSP_BTN_CLICK) {
-            if (s.menu.view==UI_VIEW_MENU || s.menu.view==UI_VIEW_QUALITY || s.menu.view==UI_VIEW_CONTROLS) {
+            if (s.menu.view==UI_VIEW_COMMENTS) {
+                ui_menu_scroll_by(&s.menu,up?-1:1,4);   // 评论页固定 4 行
+            } else if (s.menu.view==UI_VIEW_MENU || s.menu.view==UI_VIEW_QUALITY || s.menu.view==UI_VIEW_CONTROLS) {
                 ui_menu_scroll_by(&s.menu,up?-1:1,menu_rows());
             }
             else ui_menu_close(&s.menu);         // any key leaves the other pages
@@ -3062,6 +3066,12 @@ static bool pump_keys(uint32_t wait_ms) {
         ui_menu_banner(&s.menu,muted?"已静音":"已恢复声音",NULL);
         ESP_LOGI(TAG,"audio_muted=%d",(int)muted);
         return false;      // 同上：静音不换台
+    }
+    if(action==UI_ACTION_COMMENTS) {
+        // 菜单已经切到评论页了，这里只通知宿主去拉内容。
+        ui_menu_set_rows(&s.menu,4);
+        if(s_action) s_action(PASSPORT_TV_ACTION_COMMENTS);
+        return false;      // 不换台
     }
     if(action==UI_ACTION_FAVORITE) {
         // 收藏要发 HTTP，播放器线程栈不够，交给宿主去排队执行。
@@ -3733,6 +3743,18 @@ void ft_tv_key(int key, int event) {
 }
 void ft_tv_inspect(void) {
     if (atomic_load(&s_running)) on_key((bsp_btn_t)-1,BSP_BTN_CLICK,NULL);
+}
+
+void ft_tv_set_comments(const char *const *lines, unsigned count) {
+    // 从宿主任务调用。不拷贝内容，只把指针和条数交给覆盖层：
+    // 20 条评论再复制一份要 1.3 KB，播放器里这块 RAM 是硬通货。
+    if (!atomic_load(&s_running)) return;
+    if (!s_player) return;
+    ui_menu_t *menu = &s_player->menu;
+    menu->comments = lines;
+    menu->comment_count = count;
+    __sync_synchronize();          // 先写内容再让 revision 生效，避免覆盖层读到半截
+    menu->comment_rev++;
 }
 bool ft_tv_running(void) { return atomic_load(&s_running); }
 void ft_tv_stop(void) {

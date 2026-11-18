@@ -212,6 +212,14 @@ class BiliClient:
         return v["baseUrl"], a["baseUrl"], info.get("title", "")
 
     # ---------------- 评论 ----------------
+    def aid_of(self, bvid: str) -> int:
+        """bv 号换 av 号。评论、收藏这些老接口只认 aid。"""
+        info = self._get("/x/web-interface/view", {"bvid": bvid}, wbi=False) or {}
+        aid = info.get("aid")
+        if not aid:
+            raise BiliError(-1, "拿不到 aid")
+        return int(aid)
+
     def comments(self, aid: int, page: int = 1, size: int = 12) -> list[dict]:
         data = self._get("/x/v2/reply", {
             "type": 1, "oid": aid, "pn": page, "ps": size, "sort": 2,

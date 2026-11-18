@@ -64,6 +64,28 @@ static void action_task(void *arg) {
             bool paused=code==PASSPORT_TV_ACTION_PAUSE;
             esp_err_t e=bili_request_pause(connection.host,connection.port,device,paused);
             if(e!=ESP_OK)ESP_LOGW(TAG,"暂停请求失败: %s",esp_err_to_name(e));
+        } else if(code==PASSPORT_TV_ACTION_COMMENTS){
+            // 评论内容由这里拉、这里持有：播放器只画不存，省它那块 RAM。
+            // 播放器在评论页开着期间一直用这个指针，所以两个数组都得是静态的。
+            static bili_comment_list_t cmts;
+            static char lines_buf[20][144];   // 40(作者)+3(冒号)+96(正文)+1，够放整条不截断
+            static const char *lines[20];
+            if(!current_bvid[0])continue;
+            esp_err_t e=bili_fetch_comments(connection.host,connection.port,current_bvid,&cmts);
+            unsigned n=(e==ESP_OK && cmts.count)?cmts.count:0;
+            if(n>20)n=20;
+            if(n){
+                for(unsigned i=0;i<n;i++){
+                    snprintf(lines_buf[i],sizeof lines_buf[i],"%s：%s",
+                             cmts.items[i].user,cmts.items[i].text);
+                    lines[i]=lines_buf[i];
+                }
+            } else {
+                snprintf(lines_buf[0],sizeof lines_buf[0],"评论加载失败，长按OK返回");
+                lines[0]=lines_buf[0];
+                n=1;
+            }
+            ft_tv_set_comments(lines,n);
         }
     }
 }
