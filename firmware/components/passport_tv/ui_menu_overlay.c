@@ -14,11 +14,18 @@ enum { X=0, W=320, BOTTOM=210, HEADER=26, ROW=24, FOOTER=26,
 #define ACCENT 0x5DF6u
 
 static bool stale(const ui_menu_overlay_t *c,const ui_menu_t *m) {
-    unsigned selected=m->view==UI_VIEW_CONTROLS?m->controls_selected:m->selected;
+    // 每个视图的"选中项/滚动位/总条数"来路不同，必须按视图取值。
+    // 之前评论页复用了频道列表的 selected/scroll/count，于是滚动改了
+    // comment_scroll 而这里看不出来，屏幕一次都不重画（按下去像没反应）。
+    bool cmt = m->view==UI_VIEW_COMMENTS;
+    unsigned selected = cmt?m->comment_selected:
+                        m->view==UI_VIEW_CONTROLS?m->controls_selected:m->selected;
+    unsigned scroll   = cmt?m->comment_scroll:m->scroll;
+    unsigned count    = cmt?m->comment_count:m->count;
     return !c->valid || c->view!=m->view || c->selected!=selected ||
-        c->scroll!=m->scroll || c->quality!=m->quality ||
+        c->scroll!=scroll || c->quality!=m->quality ||
         c->quality_selected!=m->quality_selected || c->revision!=m->revision ||
-        c->quality_enabled!=m->quality_enabled || c->count!=m->count ||
+        c->quality_enabled!=m->quality_enabled || c->count!=count ||
         c->audio_only!=m->audio_only || c->audio_muted!=m->audio_muted ||
         c->comment_rev!=m->comment_rev;
 }
@@ -27,7 +34,11 @@ static void prepare(ui_menu_overlay_t *c,const ui_menu_t *m) {
     c->audio_only=m->audio_only;
     c->audio_muted=m->audio_muted;
     c->comment_rev=m->comment_rev;
-    c->selected=m->view==UI_VIEW_CONTROLS?m->controls_selected:m->selected;c->scroll=m->scroll;
+    if (m->view==UI_VIEW_COMMENTS) {
+        c->selected=m->comment_selected;c->scroll=m->comment_scroll;
+    } else {
+        c->selected=m->view==UI_VIEW_CONTROLS?m->controls_selected:m->selected;c->scroll=m->scroll;
+    }
     c->quality=m->quality;c->quality_selected=m->quality_selected;
     c->revision=m->revision;c->quality_enabled=m->quality_enabled;c->count=m->count;
     c->builds++;
@@ -54,8 +65,6 @@ static void prepare(ui_menu_overlay_t *c,const ui_menu_t *m) {
         ui_text_prepare(&c->text[9],"当前视频",96);
     } else if (m->view==UI_VIEW_COMMENTS) {
         ui_text_prepare(&c->text[0],"评论",100);
-        c->count=m->comment_count;          // 覆盖层用它判断还有没有内容
-        c->scroll=m->comment_scroll;
         for (unsigned i=0;i<COMMENT_ROWS;i++) {
             unsigned index=m->comment_scroll+i;
             label[0]=0;
@@ -155,6 +164,13 @@ void ui_menu_overlay_draw(const ui_menu_overlay_t *c,ui_surface_t s) {
             unsigned index=c->scroll+i;
             if (index>=c->count) break;
             int y=top+HEADER+(int)i*ROW;
+            bool chosen=index==c->selected;
+            if (chosen) {
+                // 没有高亮的话，前几次按上下键屏幕上毫无变化，
+                // 用的人会以为滚不动。列表页一直有，评论页也得有。
+                card(s,X+6,y,W-12,ROW,FOCUS);
+                ui_text_fill(s,X+10,y+7,2,10,ACCENT);
+            }
             ui_text_paint(s,X+12,y+4,&c->text[2+i],UI_COLOR_TEXT);
         }
     } else {
