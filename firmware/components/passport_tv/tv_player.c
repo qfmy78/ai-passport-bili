@@ -1699,7 +1699,8 @@ static void info_bars_stripe(ui_surface_t surface) {
 static bool refresh_info_bars(void) {
     if (!atomic_load(&s.media_started)) return true;
     const bool want=s.menu.view==UI_VIEW_MENU || s.menu.view==UI_VIEW_CONTROLS ||
-                    s.menu.view==UI_VIEW_QUALITY;
+                    s.menu.view==UI_VIEW_QUALITY
+                    || s.menu.view==UI_VIEW_COMMENTS;
     const int64_t now=esp_timer_get_time();
     if (want) {
         if (bars_drawn && now-bars_painted_us<1000000) return true;
@@ -1767,7 +1768,8 @@ static void refresh_status_text(void) {
 // isolation without knowing what came before it.
 static void overlay_stripe(unsigned stripe_y, uint8_t *pixels) {
     ui_surface_t surface=stripe_surface(stripe_y,pixels);
-    if (menu_overlay.view==UI_VIEW_MENU || menu_overlay.view==UI_VIEW_QUALITY || menu_overlay.view==UI_VIEW_CONTROLS) {
+    if (menu_overlay.view==UI_VIEW_MENU || menu_overlay.view==UI_VIEW_QUALITY ||
+        menu_overlay.view==UI_VIEW_CONTROLS || menu_overlay.view==UI_VIEW_COMMENTS) {
         ui_menu_overlay_draw(&menu_overlay,surface);
         return;
     }
@@ -1825,7 +1827,8 @@ static void overlay_stripe(unsigned stripe_y, uint8_t *pixels) {
                              UI_COLOR_TEXT,UI_COLOR_BOX);
             }
         }
-    } else if (s.menu.view==UI_VIEW_MENU || s.menu.view==UI_VIEW_QUALITY) {
+    } else if (s.menu.view==UI_VIEW_MENU || s.menu.view==UI_VIEW_QUALITY ||
+               s.menu.view==UI_VIEW_COMMENTS) {
         return; // The next complete frame freezes the newly opened overlay.
     } else if (s.menu.view==UI_VIEW_BRIGHTNESS) {
         // The backlight page. Deliberately the same shape as the volume
