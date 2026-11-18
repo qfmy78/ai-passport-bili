@@ -40,7 +40,9 @@ static void prepare(ui_menu_overlay_t *c,const ui_menu_t *m) {
         c->selected=m->view==UI_VIEW_CONTROLS?m->controls_selected:m->selected;c->scroll=m->scroll;
     }
     c->quality=m->quality;c->quality_selected=m->quality_selected;
-    c->revision=m->revision;c->quality_enabled=m->quality_enabled;c->count=m->count;
+    c->revision=m->revision;c->quality_enabled=m->quality_enabled;
+    // 条数也要按视图取：评论页的条数是 comment_count，用频道数会只画一行。
+    c->count=m->view==UI_VIEW_COMMENTS?m->comment_count:m->count;
     c->builds++;
     char label[64];
     if (m->view==UI_VIEW_QUALITY) {
