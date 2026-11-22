@@ -59,10 +59,25 @@ sudo bash deploy/install.sh --yes
 常用命令：
 
 ```bash
-sudo bash deploy/install.sh --show-pairing   # 查看配对码
+sudo ./deploy/install.sh --update            # 拉最新代码并重启（配置不动）
+sudo ./deploy/install.sh --show-pairing      # 查看配对码
 journalctl -u passport-bili -f               # 看日志
 curl localhost:10745/api/health              # 自检
 ```
+
+### 更新
+
+```bash
+sudo ./deploy/install.sh --update
+```
+
+一条命令完成：从 GitHub 拉 main 分支 → 备份旧代码 → 换掉 `service/` → 同步依赖 → 重启 → 健康检查。
+
+- **配置和配对状态都不动**：`/etc/passport-bili/env` 不动；设备配对信息（`$PREFIX/service/state`）会先搬出来、换完再放回去，不用重新配网。
+- **起不来会自动回滚**：健康检查 15 秒没通过就退回上一个备份并重启。
+- **不依赖 git**：直接下 tarball，VPS 没装 git 也能用。
+- 国内拉不动 codeload 时：`REPO_MIRROR=https://ghproxy.net sudo ./deploy/install.sh --update`
+- 只保留最近两份备份，不会把磁盘塞满。
 
 配置文件在 `/etc/passport-bili/env`（权限 600）：
 
@@ -160,6 +175,7 @@ TV_AUDIO=1                 # 设 0 会卡在彩条上（固件等音频时钟才
 ## 已知限制
 
 - **帧率天花板**：C3 要 inflate 15 个条带 + 扩成 RGB565 + SPI 刷屏，12–15 fps 是舒适区。想更流畅得降分辨率（`AV_CONFIG_GEOMETRIES` 里加档位 + 重烧固件）。
+- **码率会被上行带宽卡住**：12 fps 实测约 1.66 Mbps。链路不够时现象很迷惑——服务端 TCP 写满 → 视频线程卡住 → ffmpeg 跟着阻塞 → 连音频也断供 → 设备判定"音频饿死"自动重连，屏幕上就是**彩条→黑屏→彩条循环**。设备串口里会看到 `AUDIO_EMPTY gap_ms≈320` 和 `Session reset: audio starved`。降到 `TV_FPS=9`（约 1.2 Mbps）即可，这是实测有效的值。
 - **只支持单频道**：`channel_list` 只塞了一个"当前视频"，没有频道概念。
 - **私信只读**：能看不能发。
 - **Cookie 会过期**：`SESSDATA` 通常几个月，失效后推荐流还在但收藏/私信会报未登录，去 `/etc/passport-bili/env` 换新的再重启服务。

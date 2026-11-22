@@ -7,6 +7,7 @@
 #     sudo ./deploy/install.sh              # 安装 + 交互式配置 + 注册服务
 #     ./deploy/install.sh --setup-only      # 只装依赖和写配置，不启动
 #     ./deploy/install.sh --check           # 只体检，不安装
+#     ./deploy/install.sh --update          # 从 GitHub 拉最新代码并重启（配置不动）
 #     ./deploy/install.sh --show-pairing    # 查看 4 位配对码
 #     ./deploy/install.sh --uninstall       # 卸载
 #
@@ -62,6 +63,7 @@ usage() { sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --check)        MODE=check; shift ;;
+    --update)       MODE=update; shift ;;
     --setup-only)   SETUP_ONLY=1; shift ;;
     --show-pairing) MODE=show; shift ;;
     --uninstall)    MODE=uninstall; shift ;;
@@ -454,6 +456,114 @@ merge_defaults() {
   fi
 }
 
+# ---------- 自动更新 -----------------------------------------------------------
+# 用户不想每次重装一遍。这里直接从 GitHub 拉 main 分支的 tarball 覆盖代码目录，
+# **配置一律不动**。不依赖 git：很多 VPS 没装，国内拉 GitHub 也未必顺畅。
+#   国内网络拉不动时：REPO_MIRROR=https://ghproxy.net ./deploy/install.sh --update
+REPO_SLUG="${REPO_SLUG:-qfmy78/ai-passport-bili}"
+REPO_BRANCH="${REPO_BRANCH:-main}"
+REPO_MIRROR="${REPO_MIRROR:-}"
+
+do_update() {
+  [ -f "$ENV_FILE" ] && . "$ENV_FILE" 2>/dev/null || true
+  TV_PORT="${TV_PORT:-10745}"
+
+  step "更新" "拉取 $REPO_SLUG@$REPO_BRANCH"
+  local work tarball url src
+  work="$(mktemp -d)"
+  tarball="$work/repo.tar.gz"
+  url="https://codeload.github.com/$REPO_SLUG/tar.gz/refs/heads/$REPO_BRANCH"
+  [ -n "$REPO_MIRROR" ] && url="${REPO_MIRROR%/}/$url"
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL --connect-timeout 15 --max-time 300 "$url" -o "$tarball" || {
+      rm -rf "$work"
+      die "下载失败。国内网络可试：REPO_MIRROR=https://ghproxy.net sudo $0 --update"
+    }
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q --timeout=30 -O "$tarball" "$url" || { rm -rf "$work"; die "下载失败（wget）"; }
+  else
+    rm -rf "$work"; die "自动更新需要 curl 或 wget"
+  fi
+  ok "已下载 $(du -h "$tarball" | cut -f1)"
+
+  tar xzf "$tarball" -C "$work" || { rm -rf "$work"; die "解压失败"; }
+  src="$(ls -d "$work"/*/ 2>/dev/null | head -1)"
+  if [ -z "$src" ] || [ ! -f "$src/service/passport_bili/__main__.py" ]; then
+    rm -rf "$work"; die "包里没有 service/passport_bili —— 仓库或分支不对？"
+  fi
+
+  # 先备份再动：起不来就原样退回去，不让用户停在半新半旧的状态
+  local backup="$PREFIX/service.bak.$(date +%Y%m%d-%H%M%S)"
+  if [ -d "$PREFIX/service" ]; then
+    cp -a "$PREFIX/service" "$backup" || die "备份旧代码失败，已中止（未改动任何文件）"
+    info "旧代码备份在 $backup"
+  fi
+
+  local was_active=0
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$APP_NAME" 2>/dev/null; then
+    was_active=1
+    run_root systemctl stop "$APP_NAME" >/dev/null 2>&1 || true
+  fi
+
+  # 状态目录（已配对设备、播放令牌）可能就落在代码目录里 —— 生产环境常见
+  # TV_STATE_DIR=state，相对路径解析到 $PREFIX/service/state。直接 rm -rf 会
+  # 把配对信息一起抹掉，用户更新完就得重新配网。先搬出来，换完再放回去。
+  local state_keep=""
+  if [ -d "$PREFIX/service/state" ]; then
+    state_keep="$(mktemp -d)"
+    cp -a "$PREFIX/service/state" "$state_keep/state" || die "保存配对状态失败，已中止"
+  fi
+
+  rm -rf "$PREFIX/service"
+  cp -r "$src/service" "$PREFIX/service" || die "复制新代码失败"
+  if [ -n "$state_keep" ]; then
+    rm -rf "$PREFIX/service/state"
+    cp -a "$state_keep/state" "$PREFIX/service/state"
+    rm -rf "$state_keep"
+    info "已保留设备配对状态（不用重新配网）"
+  fi
+  if [ "$(id -u)" -eq 0 ] && [ "$RUN_USER" != "root" ]; then
+    chown -R "$RUN_USER" "$PREFIX/service" 2>/dev/null || true
+  fi
+
+  if [ -x "$PREFIX/venv/bin/pip" ]; then
+    info "同步依赖"
+    "$PREFIX/venv/bin/pip" install -q -i "$PIP_INDEX" -r "$PREFIX/service/requirements.txt"       || warn "依赖安装没成功，服务可能起不来"
+  fi
+
+  merge_defaults
+
+  if [ "$was_active" -eq 1 ]; then
+    run_root systemctl start "$APP_NAME" >/dev/null 2>&1 || true
+    info "等待服务就绪…"
+    local i ready=0
+    for i in $(seq 1 15); do
+      if curl -fsS --max-time 2 "http://127.0.0.1:${TV_PORT}/api/health" >/dev/null 2>&1; then
+        ready=1; break
+      fi
+      sleep 1
+    done
+    if [ "$ready" -eq 1 ]; then
+      curl -fsS --max-time 3 "http://127.0.0.1:${TV_PORT}/api/health"; printf '
+'
+    else
+      warn "新版本没起来，回滚"
+      rm -rf "$PREFIX/service"; cp -a "$backup" "$PREFIX/service"
+      run_root systemctl restart "$APP_NAME" >/dev/null 2>&1 || true
+      rm -rf "$work"
+      die "已回滚到上一版。看日志：journalctl -u $APP_NAME -n 50 --no-pager"
+    fi
+  else
+    info "服务当前没在运行，手动启动：cd $PREFIX/service && $PREFIX/venv/bin/python -m passport_bili"
+  fi
+
+  rm -rf "$work"
+  # 只留最近两份备份，别把磁盘塞满
+  ls -1dt "$PREFIX"/service.bak.* 2>/dev/null | tail -n +3 | while read -r old; do rm -rf "$old"; done
+  ok "更新完成（配置文件 $ENV_FILE 未改动）"
+}
+
 # ---------- 主流程 -----------------------------------------------------------
 banner() {
   printf '\n%s==============================================%s\n' "$C_B" "$C_0"
@@ -468,6 +578,7 @@ main() {
     show)      do_show_pairing ;;
     uninstall) do_uninstall ;;
     check)     do_check && exit 0 || exit 1 ;;
+    update)    do_update; exit 0 ;;
   esac
 
   step "依赖" "检查并安装系统依赖"

@@ -1,0 +1,11 @@
+# 统一 LF：这些文件会被拿到 Linux 上直接执行，
+# CRLF 会让 bash 把 "pipefail" 当成非法选项名。
+* text=auto eol=lf
+*.sh   text eol=lf
+*.py   text eol=lf
+*.c    text eol=lf
+*.h    text eol=lf
+*.md   text eol=lf
+*.bin  binary
+*.png  binary
+*.jpg  binary
