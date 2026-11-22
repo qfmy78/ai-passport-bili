@@ -550,7 +550,13 @@ static void browse_loop(void) {
         }
         if(loaded)bili_ui_list(&list,"bilibili 推荐","OK 播放 · 上下键 选择 · 长按OK 个人主页");
         key_msg_t m;wait_key(&m);
-        if(m.key==BSP_BTN_OK && m.ev==BSP_BTN_LONG){profile_loop(device);continue;}
+        if(m.key==BSP_BTN_OK && m.ev==BSP_BTN_LONG){
+            profile_loop(device);
+            // 个人主页里选了"网络设置"：这个标志只有 launcher 在主循环里消费，
+            // 浏览循环不退出去，用户看到的就是"点了没反应、又回到列表"。
+            if(atomic_load(&setup_requested))return;
+            continue;
+        }
         if(!loaded)continue;   // 失败页任意键重试
         if(m.key==BSP_BTN_UP && m.ev==BSP_BTN_CLICK){
             if(list.selected>0){list.selected--;list_keep_visible(&list);}
@@ -575,7 +581,14 @@ static void launcher(void *arg) {
                 screen("Wi-Fi 连接未成功",NULL,"OK 重试 · 长按 OK 设置",NULL);
                 while(!passport_wifi_is_online() && !atomic_load(&setup_requested)){
                     key_msg_t retry;
-                    if(xQueueReceive(keys,&retry,pdMS_TO_TICKS(100))==pdTRUE)break;
+                    if(xQueueReceive(keys,&retry,pdMS_TO_TICKS(100))!=pdTRUE)continue;
+                    // 屏幕上写着"长按 OK 设置"，但原来这里任何按键都只是重试，
+                    // 长按等于白按——社区反馈的就是这一处。
+                    if(retry.key==BSP_BTN_OK && retry.ev==BSP_BTN_LONG){
+                        atomic_store(&setup_requested,true);
+                        break;
+                    }
+                    if(retry.key==BSP_BTN_OK && retry.ev==BSP_BTN_CLICK)break;  // 短按重试
                 }
                 continue;
             }

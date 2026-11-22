@@ -229,7 +229,7 @@ void bili_ui_comments(const bili_comment_list_t *list, const char *header)
 
 // ---- 个人主页 ---------------------------------------------------------------
 static const char *const PROFILE_ENTRIES[BILI_PROFILE_ENTRIES] = {
-    "我的收藏夹", "私信", "设置"
+    "我的收藏夹", "私信", "网络设置"
 };
 
 typedef struct {
